@@ -19,6 +19,7 @@ alias mkchr32='sudo extra-i686-build'
 alias mkchr64='sudo multilib-build'
 alias db-aur='ssh sigurd.archlinux.org /arch/db-update'
 alias svim='sudo vim'
+alias sctl='sudo systemctl'
 
 export PS1='\[\e[1;32m\][\u@\h \W]\$\[\e[0m\] '
 export PATH="/usr/lib/colorgcc/bin:$PATH"
