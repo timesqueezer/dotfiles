@@ -3,16 +3,10 @@
 [ -z "$PS1" ] && return
 
 alias ls='ls --color=auto'
-alias ll='ls -lh --color=auto'
+alias ll='ls -lha --color=auto'
 alias grep='grep --color=auto'
-
-if [[ $(which pacman-color 2> /dev/null) ]]; then
-	alias pacman='pacman-color'
-	alias spacman='sudo pacman-color'
-else
-	alias pacman='pacman'
-	alias spacman='sudo pacman'
-fi
+alias pacman='pacman'
+alias spacman='sudo pacman'
 
 alias mkchr='sudo extra-i686-build && sudo multilib-build'
 alias mkchr32='sudo extra-i686-build'
@@ -26,8 +20,10 @@ export PATH="/usr/lib/colorgcc/bin:$PATH"
 export LC_TIME="de_DE.UTF-8"
 
 complete -cf sudo
-export EDITOR=gvim
+export EDITOR=vim
 alias sharedir='python -m http.server'
+
+eval "$(ssh-agent -s)"
 
 if [[ -n "$DISPLAY" ]]; then
 	BROWSER=chromium

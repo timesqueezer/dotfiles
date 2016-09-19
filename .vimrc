@@ -18,7 +18,7 @@ set showmatch           " show matching brackets (),{},[]
 set matchpairs+=<:>     " match < and > as well
 set mat=5               " show matching brackets for 0.5 seconds
 set background=dark     " we don't like bright white terminals
-set gfn=Bitstream\ Vera\ Sans\ Mono\ 9
+set gfn=Input\ Mono\ 10
 set number              " show line numbers
 
 " cursor settings
