@@ -23,7 +23,7 @@ complete -cf sudo
 export EDITOR=vim
 alias sharedir='python -m http.server'
 
-eval "$(ssh-agent -s)"
+eval $(keychain --eval --quiet -Q id_rsa)
 
 if [[ -n "$DISPLAY" ]]; then
 	BROWSER=chromium

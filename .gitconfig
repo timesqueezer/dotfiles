@@ -1,7 +1,10 @@
 [user]
 	name = Matz Radloff
 	email = matzradloff@gmail.com
+	signingkey = F0B2BDAF432DE4B2
 [color]
 	diff = auto
 	status = auto
 	branch = auto
+[commit]
+	gpgsign = true
