@@ -88,3 +88,7 @@ source $ZSH/oh-my-zsh.sh
 
 BULLETTRAIN_NVM_BG=yellow
 
+alias sctl="sudo systemctl"
+alias spacman="sudo pacman"
+alias svim="sudo vim"
+
