@@ -56,6 +56,7 @@ CASE_SENSITIVE="true"
 plugins=(git)
 
 source $ZSH/oh-my-zsh.sh
+# source /usr/share/zsh-theme-powerlevel10k/powerlevel10k.zsh-theme
 
 # User configuration
 
@@ -91,4 +92,8 @@ BULLETTRAIN_NVM_BG=yellow
 alias sctl="sudo systemctl"
 alias spacman="sudo pacman"
 alias svim="sudo vim"
+
+alias gs="git status"
+
+eval $(keychain --eval --quiet -Q id_rsa)
 
