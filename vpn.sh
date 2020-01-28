@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+if [[ $UID != 0 ]]; then
+    echo "This must be run as root."
+    exit 1
+fi
+
+function iface_up() {
+    ip netns add myvpn
+
+    ip netns exec myvpn ip addr add 127.0.0.1/8 dev lo
+    ip netns exec myvpn ip link set lo up
+
+    ip link add vpn0 type veth peer name vpn1
+    ip link set vpn0 up
+    ip link set vpn1 netns myvpn up
+
+    ip addr add 10.10.10.1/24 dev vpn0
+    ip netns exec myvpn ip addr add 10.10.10.2/24 dev vpn1
+    ip netns exec myvon ip route add default via 10.10.10.1 dev vpn1
+
+    iptables -A INPUT \! -i vpn0 -s 10.10.10.0/24 -j DROP
+    iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -o wl+ -j MASQUERADE
+
+    sysctl -q net.ipv4.ip_forward=1
+
+    mkdir -p /etc/netns/myvpn
+    echo 'nameserver 5.189.166.80' > /etc/netns/myvpn/resolv.conf
+
+    ip netns exec myvpn fping -q www.google.com
+}
+
+function iface_down() {
+    ip netns pids myvpn | xargs -rd'\n' kill
+
+    rm -rf /etc/netns/myvpn
+
+    sysctl -q net.ipv4.ip_forward=0
+
+    iptables -D INPUT \! -i vpn0 -s 10.10.10.0/24 -j DROP
+    iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -o wl+ -j MASQUERADE
+
+    ip netns delete myvpn
+}
+
+function run() {
+    shift
+    exec sudo ip netns exec myvpn "$@"
+}
+
+function start_vpn() {
+    sudo ip netns exec myvpn openvpn --cd /opt/mullvad --config /opt/mullvad/mullvad_nl.conf &
+
+    while ! sudo ip netns exec myvpn ip a show dev tun0 up; do
+        sleep .5
+    done
+}
+
+case "$1" in
+    up)
+        iface_up ;;
+    down)
+        iface_down ;;
+    run)
+        run "$@" ;;
+    start_vpn)
+        start_vpn ;;
+    *)
+        echo "Syntax: $0 up|down|run|start_vpn"
+        exit 1
+        ;;
+esac
