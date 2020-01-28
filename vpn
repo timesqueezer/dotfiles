@@ -17,7 +17,7 @@ function iface_up() {
 
     ip addr add 10.10.10.1/24 dev vpn0
     ip netns exec myvpn ip addr add 10.10.10.2/24 dev vpn1
-    ip netns exec myvon ip route add default via 10.10.10.1 dev vpn1
+    ip netns exec myvpn ip route add default via 10.10.10.1 dev vpn1
 
     iptables -A INPUT \! -i vpn0 -s 10.10.10.0/24 -j DROP
     iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -o wl+ -j MASQUERADE
@@ -25,7 +25,7 @@ function iface_up() {
     sysctl -q net.ipv4.ip_forward=1
 
     mkdir -p /etc/netns/myvpn
-    echo 'nameserver 5.189.166.80' > /etc/netns/myvpn/resolv.conf
+    echo 'nameserver 1.1.1.1' > /etc/netns/myvpn/resolv.conf
 
     ip netns exec myvpn fping -q www.google.com
 }
