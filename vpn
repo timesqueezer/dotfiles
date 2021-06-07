@@ -21,6 +21,8 @@ function iface_up() {
 
     iptables -A INPUT \! -i vpn0 -s 10.10.10.0/24 -j DROP
     iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -o e+ -j MASQUERADE
+    iptables -A FORWARD -i e+ -o vpn0 -j ACCEPT
+    iptables -A FORWARD -o e+ -i vpn0 -j ACCEPT
 
     sysctl -q net.ipv4.ip_forward=1
 
@@ -39,6 +41,8 @@ function iface_down() {
 
     iptables -D INPUT \! -i vpn0 -s 10.10.10.0/24 -j DROP
     iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -o e+ -j MASQUERADE
+    iptables -D FORWARD -i e+ -o vpn0 -j ACCEPT
+    iptables -D FORWARD -o e+ -i vpn0 -j ACCEPT
 
     ip netns delete myvpn
 }
@@ -49,7 +53,7 @@ function run() {
 }
 
 function start_vpn() {
-    sudo ip netns exec myvpn openvpn --cd /opt/mullvad --config /opt/mullvad/mullvad_nl.conf &
+    sudo ip netns exec myvpn openvpn --cd /opt/mullvad --config /opt/mullvad/mullvad_nl_all.conf &
 
     while ! sudo ip netns exec myvpn ip a show dev tun0 up; do
         sleep .5
