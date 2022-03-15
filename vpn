@@ -6,58 +6,48 @@ if [[ $UID != 0 ]]; then
 fi
 
 function iface_up() {
-    ip netns add myvpn
+    ip netns add vpnns
 
-    ip netns exec myvpn ip addr add 127.0.0.1/8 dev lo
-    ip netns exec myvpn ip link set lo up
+    ip link add wg0 type wireguard
+    ip link set wg0 netns vpnns
 
-    ip link add vpn0 type veth peer name vpn1
-    ip link set vpn0 up
-    ip link set vpn1 netns myvpn up
+    ip -n vpnns -4 address add 10.64.236.160/32 dev wg0
+    ip -n vpnns -6 address add fc00:bbbb:bbbb:bb01::1:ec9f/128 dev wg0
+    ip netns exec vpnns wg setconf wg0 /etc/wireguard/wg0.conf
+    ip -n vpnns link set wg0 up
+    ip -n vpnns -4 route add default dev wg0
+    ip -n vpnns -6 route add default dev wg0
 
-    ip addr add 10.10.10.1/24 dev vpn0
-    ip netns exec myvpn ip addr add 10.10.10.2/24 dev vpn1
-    ip netns exec myvpn ip route add default via 10.10.10.1 dev vpn1
+    ip link add veth1 type veth peer name br-veth1
+    ip link set veth1 netns vpnns
+    ip -n vpnns -4 addr add 10.10.10.2/24 dev veth1
 
-    iptables -A INPUT \! -i vpn0 -s 10.10.10.0/24 -j DROP
-    iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -o e+ -j MASQUERADE
-    iptables -A FORWARD -i e+ -o vpn0 -j ACCEPT
-    iptables -A FORWARD -o e+ -i vpn0 -j ACCEPT
+    ip link add name br1 type bridge
+    ip link set br1 up
 
-    sysctl -q net.ipv4.ip_forward=1
+    ip link set br-veth1 up
+    ip -n vpnns link set veth1 up
 
-    mkdir -p /etc/netns/myvpn
-    echo 'nameserver 1.1.1.1' > /etc/netns/myvpn/resolv.conf
+    ip link set br-veth1 master br1
+    ip addr add 10.10.10.1/24 brd + dev br1
 
-    ip netns exec myvpn fping -q www.google.com
+    mkdir -p /etc/netns/vpnns
+    echo 'nameserver 1.1.1.1' > /etc/netns/vpnns/resolv.conf
+
+    ip netns exec vpnns fping -q www.google.com
 }
 
 function iface_down() {
-    ip netns pids myvpn | xargs -rd'\n' kill
+    ip netns pids vpnns | xargs -rd'\n' kill
+    rm -rf /etc/netns/vpnns
+    ip netns delete vpnns
+    ip link del br1
 
-    rm -rf /etc/netns/myvpn
-
-    sysctl -q net.ipv4.ip_forward=0
-
-    iptables -D INPUT \! -i vpn0 -s 10.10.10.0/24 -j DROP
-    iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -o e+ -j MASQUERADE
-    iptables -D FORWARD -i e+ -o vpn0 -j ACCEPT
-    iptables -D FORWARD -o e+ -i vpn0 -j ACCEPT
-
-    ip netns delete myvpn
 }
 
 function run() {
     shift
-    exec sudo ip netns exec myvpn "$@"
-}
-
-function start_vpn() {
-    sudo ip netns exec myvpn openvpn --cd /opt/mullvad --config /opt/mullvad/mullvad_nl_all.conf &
-
-    while ! sudo ip netns exec myvpn ip a show dev tun0 up; do
-        sleep .5
-    done
+    exec sudo ip netns exec vpnns "$@"
 }
 
 case "$1" in
@@ -67,10 +57,8 @@ case "$1" in
         iface_down ;;
     run)
         run "$@" ;;
-    start_vpn)
-        start_vpn ;;
     *)
-        echo "Syntax: $0 up|down|run|start_vpn"
+        echo "Syntax: $0 up|down|run"
         exit 1
         ;;
 esac
