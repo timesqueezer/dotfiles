@@ -1,3 +1,17 @@
+
+alias sctl="sudo systemctl"
+alias spacman="sudo pacman"
+alias svim="sudo vim"
+
+alias gs="git status"
+# alias git-open-conflicts="subl $(git diff --name-only --diff-filter=U --relative)"
+
+
+eval $(keychain --eval --quiet -Q id_rsa)
+
+export GPG_TTY=$(tty)
+export LC_ALL=$LANG
+
 # Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
 # Initialization code that may require console input (password prompts, [y/n]
 # confirmations, etc.) must go above this block, everything else may go below.
@@ -95,15 +109,19 @@ source /usr/share/zsh-theme-powerlevel10k/powerlevel10k.zsh-theme
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 
-BULLETTRAIN_NVM_BG=yellow
-
-alias sctl="sudo systemctl"
-alias spacman="sudo pacman"
-alias svim="sudo vim"
-
-alias gs="git status"
-
-eval $(keychain --eval --quiet -Q id_rsa)
-
+# BULLETTRAIN_NVM_BG=yellow
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
+source /usr/share/nvm/init-nvm.sh
+
+
+
+alias ls="eza --icons=always"
+
+# eval "$(starship init zsh)"
+
+# Zsh Auto-Suggestions
+source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+
+# Setze Tastenkombination für Auto-Suggestions
+bindkey '^ ' autosuggest-accept
