@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+DEBUG="${DEBUG:-0}"
+
+if [[ "$DEBUG" != 0 ]]; then
+    export PS4='+ [${BASH_SOURCE##*/}:${LINENO}] '
+    set -x
+fi
+
 NS="vpnns"
 WG_IFACE="wg0"
 WG_CONF="/etc/wireguard/${WG_IFACE}.conf"
@@ -50,20 +57,52 @@ link_exists_ns() {
 
 wg_conf_interface_values() {
     local key="$1"
-    awk -v key="$key" '
-        BEGIN { in_iface = 0 }
+    awk -v want_key="$key" '
+        function ltrim(s) { sub(/^[ \t\r\n]+/, "", s); return s }
+        function rtrim(s) { sub(/[ \t\r\n]+$/, "", s); return s }
+        function trim(s)  { return rtrim(ltrim(s)) }
+
+        BEGIN {
+            in_iface = 0
+            want = tolower(want_key)
+        }
         /^[ \t]*\[Interface\][ \t]*$/ { in_iface = 1; next }
         /^[ \t]*\[/ { if (in_iface) exit }
         in_iface {
             line = $0
             sub(/[;#].*$/, "", line)
-            if (match(line, "^[ \t]*" key "[ \t]*=")) {
-                sub("^[ \t]*" key "[ \t]*=[ \t]*", "", line)
-                gsub(/[ \t]/, "", line)
-                if (line != "") print line
-            }
+            if (line ~ /^[ \t]*$/) next
+
+            n = split(line, parts, "=")
+            if (n < 2) next
+
+            k = trim(parts[1])
+            v = substr(line, index(line, "=") + 1)
+            v = trim(v)
+
+            if (tolower(k) == want && v != "") print v
         }
     ' "$WG_CONF"
+}
+
+debug_dump_state() {
+    log "--- DEBUG STATE DUMP START ---"
+    set +e
+    log "ip netns list:"; ip netns list >&2
+    log "ip -d link show:"; ip -d link show >&2
+
+    if netns_exists; then
+        log "ip -n $NS -d link show:"; ip -n "$NS" -d link show >&2
+        log "ip -n $NS addr show:"; ip -n "$NS" addr show >&2
+        log "ip -n $NS -4 route show:"; ip -n "$NS" -4 route show >&2
+        log "ip -n $NS -6 route show:"; ip -n "$NS" -6 route show >&2
+        if command -v wg >/dev/null 2>&1; then
+            log "wg show (in netns):"; ip netns exec "$NS" wg show >&2
+        fi
+    fi
+
+    set -e
+    log "--- DEBUG STATE DUMP END ---"
 }
 
 write_netns_resolv_conf() {
@@ -124,7 +163,12 @@ iface_up() {
 
     cleanup_on_error() {
         local exit_code=$?
-        warn "up failed (exit $exit_code); cleaning up newly created resources"
+        local failed_cmd="${BASH_COMMAND:-unknown}"
+        local failed_line="${BASH_LINENO[0]:-unknown}"
+        warn "up failed (exit $exit_code) at line $failed_line: $failed_cmd"
+        if [[ "$DEBUG" != 0 ]]; then
+            debug_dump_state
+        fi
         set +e
 
         rm -rf "/etc/netns/$NS" 2>/dev/null
@@ -170,6 +214,9 @@ iface_up() {
     if [[ -z "$addr_raw" ]]; then
         warn "No Address= found in $WG_CONF; leaving wg interface unaddressed"
     else
+        if [[ "$DEBUG" != 0 ]]; then
+            log "Addresses from $WG_CONF:"; printf '%s\n' "$addr_raw" >&2
+        fi
         while IFS= read -r addr; do
             [[ -z "$addr" ]] && continue
             ip -n "$NS" address replace "$addr" dev "$WG_IFACE"
@@ -214,6 +261,16 @@ iface_up() {
 
     ip -n "$NS" link set "$VETH_NS" up
     ip -n "$NS" addr replace "$VETH_NS_ADDR" dev "$VETH_NS"
+
+    if [[ "$DEBUG" != 0 ]]; then
+        local dns_raw
+        dns_raw="$(wg_conf_interface_values DNS | tr ',' '\n' | sed -e 's/[[:space:]]//g' -e '/^$/d')"
+        if [[ -n "$dns_raw" ]]; then
+            log "DNS from $WG_CONF:"; printf '%s\n' "$dns_raw" >&2
+        else
+            log "DNS not set in $WG_CONF (will use default $DEFAULT_DNS)"
+        fi
+    fi
 
     write_netns_resolv_conf
 
