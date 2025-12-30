@@ -1,64 +1,285 @@
 #!/usr/bin/env bash
 
-if [[ $UID != 0 ]]; then
-    echo "This must be run as root."
+set -euo pipefail
+
+NS="vpnns"
+WG_IFACE="wg0"
+WG_CONF="/etc/wireguard/${WG_IFACE}.conf"
+
+BRIDGE="br1"
+BRIDGE_ADDR="10.10.10.1/24"
+
+VETH_NS="veth1"
+VETH_ROOT="br-veth1"
+VETH_NS_ADDR="10.10.10.2/24"
+
+DEFAULT_DNS="1.1.1.1"
+
+log() {
+    printf '[%s] %s\n' "$(date +'%F %T')" "$*" >&2
+}
+
+warn() {
+    log "WARN: $*"
+}
+
+die() {
+    log "ERROR: $*"
     exit 1
-fi
-
-function iface_up() {
-    ip netns add vpnns
-
-    ip link add wg0 type wireguard
-    ip link set wg0 netns vpnns
-
-    ip -n vpnns -4 address add 10.64.236.160/32 dev wg0
-    ip -n vpnns -6 address add fc00:bbbb:bbbb:bb01::1:ec9f/128 dev wg0
-    ip netns exec vpnns wg setconf wg0 /etc/wireguard/wg0.conf
-    ip -n vpnns link set wg0 up
-    ip -n vpnns -4 route add default dev wg0
-    ip -n vpnns -6 route add default dev wg0
-
-    ip link add veth1 type veth peer name br-veth1
-    ip link set veth1 netns vpnns
-    ip -n vpnns -4 addr add 10.10.10.2/24 dev veth1
-
-    ip link add name br1 type bridge
-    ip link set br1 up
-
-    ip link set br-veth1 up
-    ip -n vpnns link set veth1 up
-
-    ip link set br-veth1 master br1
-    ip addr add 10.10.10.1/24 brd + dev br1
-
-    mkdir -p /etc/netns/vpnns
-    echo 'nameserver 1.1.1.1' > /etc/netns/vpnns/resolv.conf
-
-    ip netns exec vpnns fping -q www.google.com
 }
 
-function iface_down() {
-    ip netns pids vpnns | xargs -rd'\n' kill
-    rm -rf /etc/netns/vpnns
-    ip netns delete vpnns
-    ip link del br1
-
+need_cmd() {
+    command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
 }
 
-function run() {
+need_file() {
+    [[ -f "$1" ]] || die "Missing required file: $1"
+}
+
+netns_exists() {
+    ip netns list | awk '{print $1}' | grep -qx "$NS"
+}
+
+link_exists_root() {
+    ip link show dev "$1" >/dev/null 2>&1
+}
+
+link_exists_ns() {
+    ip -n "$NS" link show dev "$1" >/dev/null 2>&1
+}
+
+wg_conf_interface_values() {
+    local key="$1"
+    awk -v key="$key" '
+        BEGIN { in_iface = 0 }
+        /^[ \t]*\[Interface\][ \t]*$/ { in_iface = 1; next }
+        /^[ \t]*\[/ { if (in_iface) exit }
+        in_iface {
+            line = $0
+            sub(/[;#].*$/, "", line)
+            if (match(line, "^[ \t]*" key "[ \t]*=")) {
+                sub("^[ \t]*" key "[ \t]*=[ \t]*", "", line)
+                gsub(/[ \t]/, "", line)
+                if (line != "") print line
+            }
+        }
+    ' "$WG_CONF"
+}
+
+write_netns_resolv_conf() {
+    local resolv_dir="/etc/netns/$NS"
+    local resolv_tmp
+    resolv_tmp="$(mktemp)"
+
+    local dns_raw
+    dns_raw="$(wg_conf_interface_values DNS | tr ',' '\n' | sed -e 's/[[:space:]]//g' -e '/^$/d' | tr '\n' ' ')"
+    if [[ -z "$dns_raw" ]]; then
+        dns_raw="$DEFAULT_DNS"
+    fi
+
+    : >"$resolv_tmp"
+    for dns in $dns_raw; do
+        printf 'nameserver %s\n' "$dns" >>"$resolv_tmp"
+    done
+
+    mkdir -p "$resolv_dir"
+    chmod 0755 "$resolv_dir"
+    mv "$resolv_tmp" "$resolv_dir/resolv.conf"
+    chmod 0644 "$resolv_dir/resolv.conf"
+}
+
+usage() {
+    cat >&2 <<EOF
+Usage: $0 up|down|run <cmd...>
+
+Commands:
+  up      Create/reuse netns + WireGuard interface and bring them up
+  down    Tear everything down (best-effort)
+  run     Run a command inside the namespace (e.g. $0 run curl https://ifconfig.me)
+EOF
+}
+
+cleanup_best_effort() {
+    set +e
+    rm -rf "/etc/netns/$NS" 2>/dev/null
+    ip link del "$VETH_ROOT" 2>/dev/null
+    ip link del "$BRIDGE" 2>/dev/null
+    ip netns delete "$NS" 2>/dev/null
+    ip link del "$WG_IFACE" 2>/dev/null
+    set -e
+}
+
+iface_up() {
+    need_cmd ip
+    need_cmd wg
+    need_file "$WG_CONF"
+
+    if [[ ${UID:-$(id -u)} != 0 ]]; then
+        die "This must be run as root."
+    fi
+
+    local created_netns=0
+    local created_bridge=0
+    local created_veth=0
+
+    cleanup_on_error() {
+        local exit_code=$?
+        warn "up failed (exit $exit_code); cleaning up newly created resources"
+        set +e
+
+        rm -rf "/etc/netns/$NS" 2>/dev/null
+
+        if (( created_veth == 1 )); then
+            ip link del "$VETH_ROOT" 2>/dev/null
+        fi
+
+        if (( created_bridge == 1 )); then
+            ip link del "$BRIDGE" 2>/dev/null
+        fi
+
+        if (( created_netns == 1 )); then
+            ip netns delete "$NS" 2>/dev/null
+        fi
+
+        set -e
+        exit "$exit_code"
+    }
+    trap cleanup_on_error ERR
+
+    if netns_exists; then
+        log "Reusing existing netns: $NS"
+    else
+        log "Creating netns: $NS"
+        ip netns add "$NS"
+        created_netns=1
+    fi
+
+    if link_exists_ns "$WG_IFACE"; then
+        log "Reusing existing $WG_IFACE in netns"
+    elif link_exists_root "$WG_IFACE"; then
+        log "Moving existing $WG_IFACE into netns"
+        ip link set "$WG_IFACE" netns "$NS"
+    else
+        log "Creating $WG_IFACE"
+        ip link add "$WG_IFACE" type wireguard
+        ip link set "$WG_IFACE" netns "$NS"
+    fi
+
+    local addr_raw
+    addr_raw="$(wg_conf_interface_values Address | tr ',' '\n' | sed -e 's/[[:space:]]//g' -e '/^$/d')"
+    if [[ -z "$addr_raw" ]]; then
+        warn "No Address= found in $WG_CONF; leaving wg interface unaddressed"
+    else
+        while IFS= read -r addr; do
+            [[ -z "$addr" ]] && continue
+            ip -n "$NS" address replace "$addr" dev "$WG_IFACE"
+        done <<<"$addr_raw"
+    fi
+
+    ip netns exec "$NS" wg setconf "$WG_IFACE" "$WG_CONF"
+    ip -n "$NS" link set "$WG_IFACE" up
+    ip -n "$NS" -4 route replace default dev "$WG_IFACE"
+    ip -n "$NS" -6 route replace default dev "$WG_IFACE"
+
+    if link_exists_root "$BRIDGE"; then
+        log "Reusing existing bridge: $BRIDGE"
+    else
+        log "Creating bridge: $BRIDGE"
+        ip link add name "$BRIDGE" type bridge
+        created_bridge=1
+    fi
+    ip link set "$BRIDGE" up
+    ip addr replace "$BRIDGE_ADDR" dev "$BRIDGE"
+
+    if link_exists_root "$VETH_ROOT"; then
+        log "Reusing existing veth root: $VETH_ROOT"
+    else
+        log "Creating veth pair: $VETH_NS <-> $VETH_ROOT"
+        ip link add "$VETH_NS" type veth peer name "$VETH_ROOT"
+        created_veth=1
+        ip link set "$VETH_NS" netns "$NS"
+    fi
+
+    if ! link_exists_ns "$VETH_NS"; then
+        if link_exists_root "$VETH_NS"; then
+            log "Moving existing $VETH_NS into netns"
+            ip link set "$VETH_NS" netns "$NS"
+        else
+            die "Expected $VETH_NS in netns but not found; try '$0 down' to reset"
+        fi
+    fi
+
+    ip link set "$VETH_ROOT" up
+    ip link set "$VETH_ROOT" master "$BRIDGE"
+
+    ip -n "$NS" link set "$VETH_NS" up
+    ip -n "$NS" addr replace "$VETH_NS_ADDR" dev "$VETH_NS"
+
+    write_netns_resolv_conf
+
+    if command -v fping >/dev/null 2>&1; then
+        ip netns exec "$NS" fping -q www.google.com
+    else
+        warn "fping not found; skipping connectivity check"
+    fi
+
+    trap - ERR
+    log "Namespace $NS is up"
+}
+
+iface_down() {
+    if [[ ${UID:-$(id -u)} != 0 ]]; then
+        die "This must be run as root."
+    fi
+
+    set +e
+
+    if netns_exists; then
+        ip netns pids "$NS" 2>/dev/null | xargs -r kill 2>/dev/null
+    fi
+
+    rm -rf "/etc/netns/$NS" 2>/dev/null
+    ip link del "$VETH_ROOT" 2>/dev/null
+    ip link del "$BRIDGE" 2>/dev/null
+    ip netns delete "$NS" 2>/dev/null
+    ip link del "$WG_IFACE" 2>/dev/null
+
+    set -e
+    log "Namespace $NS is down"
+}
+
+run() {
+    if [[ ${UID:-$(id -u)} != 0 ]]; then
+        die "This must be run as root."
+    fi
+
     shift
-    exec sudo ip netns exec vpnns "$@"
+    if ! netns_exists; then
+        die "Namespace $NS does not exist; run '$0 up' first"
+    fi
+    exec ip netns exec "$NS" "$@"
 }
 
-case "$1" in
+case "${1:-}" in
     up)
-        iface_up ;;
+        iface_up
+        ;;
     down)
-        iface_down ;;
+        iface_down
+        ;;
     run)
-        run "$@" ;;
+        if [[ $# -lt 2 ]]; then
+            usage
+            exit 1
+        fi
+        run "$@"
+        ;;
+    -h|--help|help|"")
+        usage
+        exit 0
+        ;;
     *)
-        echo "Syntax: $0 up|down|run"
+        usage
         exit 1
         ;;
 esac
