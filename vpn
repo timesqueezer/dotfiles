@@ -22,6 +22,10 @@ VETH_NS_ADDR="10.10.10.2/24"
 
 DEFAULT_DNS="1.1.1.1"
 
+CHECK="${CHECK:-1}"
+CHECK_FATAL="${CHECK_FATAL:-0}"
+CHECK_HOST="${CHECK_HOST:-www.google.com}"
+
 log() {
     printf '[%s] %s\n' "$(date +'%F %T')" "$*" >&2
 }
@@ -125,6 +129,46 @@ write_netns_resolv_conf() {
     chmod 0755 "$resolv_dir"
     mv "$resolv_tmp" "$resolv_dir/resolv.conf"
     chmod 0644 "$resolv_dir/resolv.conf"
+
+    if [[ "$DEBUG" != 0 ]]; then
+        log "wrote $resolv_dir/resolv.conf:"; cat "$resolv_dir/resolv.conf" >&2
+    fi
+}
+
+connectivity_check() {
+    if (( CHECK == 0 )); then
+        return 0
+    fi
+
+    if ! command -v fping >/dev/null 2>&1; then
+        warn "fping not found; skipping connectivity check"
+        return 0
+    fi
+
+    if ip netns exec "$NS" fping -q -c1 -t3000 "$CHECK_HOST"; then
+        log "Connectivity check OK: $CHECK_HOST"
+        return 0
+    fi
+
+    warn "Connectivity check FAILED: $CHECK_HOST"
+
+    if [[ "$DEBUG" != 0 ]]; then
+        set +e
+        log "Check diagnostics:"
+        log "resolv.conf:"; cat "/etc/netns/$NS/resolv.conf" >&2
+        log "route (v4):"; ip -n "$NS" -4 route show >&2
+        log "route (v6):"; ip -n "$NS" -6 route show >&2
+        log "try ping 1.1.1.1:"; ip netns exec "$NS" ping -c1 -w3 1.1.1.1 >&2
+        log "try ping 8.8.8.8:"; ip netns exec "$NS" ping -c1 -w3 8.8.8.8 >&2
+        log "try resolve host:"; ip netns exec "$NS" getent ahosts "$CHECK_HOST" >&2
+        set -e
+    fi
+
+    if (( CHECK_FATAL != 0 )); then
+        return 1
+    fi
+
+    return 0
 }
 
 usage() {
@@ -273,12 +317,7 @@ iface_up() {
     fi
 
     write_netns_resolv_conf
-
-    if command -v fping >/dev/null 2>&1; then
-        ip netns exec "$NS" fping -q www.google.com
-    else
-        warn "fping not found; skipping connectivity check"
-    fi
+    connectivity_check
 
     trap - ERR
     log "Namespace $NS is up"
