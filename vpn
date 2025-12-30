@@ -11,8 +11,8 @@ function iface_up() {
     ip link add wg0 type wireguard
     ip link set wg0 netns vpnns
 
-    ip -n vpnns -4 address add 10.70.71.128/32 dev wg0
-    ip -n vpnns -6 address add fc00:bbbb:bbbb:bb01::7:477f/128 dev wg0
+    ip -n vpnns -4 address add 10.66.65.12/32 dev wg0
+    ip -n vpnns -6 address add fc00:bbbb:bbbb:bb01::3:410b/128 dev wg0
     ip netns exec vpnns wg setconf wg0 /etc/wireguard/wg0.conf
     ip -n vpnns link set wg0 up
     ip -n vpnns -4 route add default dev wg0
