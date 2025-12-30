@@ -89,6 +89,54 @@ wg_conf_interface_values() {
     ' "$WG_CONF"
 }
 
+wg_setconf_from_wg_quick_conf() {
+    # `wg setconf` cannot parse wg-quick-only keys (Address, DNS, PostUp, ...).
+    # Build a temporary config containing only keys understood by `wg`.
+    local out="$1"
+    awk '
+        function ltrim(s) { sub(/^[ \t\r\n]+/, "", s); return s }
+        function rtrim(s) { sub(/[ \t\r\n]+$/, "", s); return s }
+        function trim(s)  { return rtrim(ltrim(s)) }
+        function lower(s) { return tolower(s) }
+
+        BEGIN { section = "" }
+
+        /^[ \t]*\[Interface\][ \t]*$/ { section = "interface"; print "[Interface]"; next }
+        /^[ \t]*\[Peer\][ \t]*$/      { section = "peer";      print "[Peer]";      next }
+        /^[ \t]*\[/                   { section = "other"; next }
+
+        {
+            line = $0
+            sub(/[;#].*$/, "", line)
+            line = trim(line)
+            if (line == "") next
+            # Only keep key=value lines
+            n = split(line, parts, "=")
+            if (n < 2) next
+            key = trim(parts[1])
+            val = trim(substr(line, index(line, "=") + 1))
+            if (val == "") next
+            k = lower(key)
+
+            if (section == "interface") {
+                # Allowed keys for `wg setconf` in [Interface]
+                if (k == "privatekey" || k == "listenport" || k == "fwmark") {
+                    print key " = " val
+                }
+                next
+            }
+
+            if (section == "peer") {
+                # Allowed keys for `wg setconf` in [Peer]
+                if (k == "publickey" || k == "presharedkey" || k == "allowedips" || k == "endpoint" || k == "persistentkeepalive") {
+                    print key " = " val
+                }
+                next
+            }
+        }
+    ' "$WG_CONF" >"$out"
+}
+
 debug_dump_state() {
     log "--- DEBUG STATE DUMP START ---"
     set +e
@@ -267,7 +315,14 @@ iface_up() {
         done <<<"$addr_raw"
     fi
 
-    ip netns exec "$NS" wg setconf "$WG_IFACE" "$WG_CONF"
+    local wg_conf_tmp
+    wg_conf_tmp="$(mktemp)"
+    wg_setconf_from_wg_quick_conf "$wg_conf_tmp"
+    if [[ "$DEBUG" != 0 ]]; then
+        log "wg setconf input (filtered):"; cat "$wg_conf_tmp" >&2
+    fi
+    ip netns exec "$NS" wg setconf "$WG_IFACE" "$wg_conf_tmp"
+    rm -f "$wg_conf_tmp"
     ip -n "$NS" link set "$WG_IFACE" up
     ip -n "$NS" -4 route replace default dev "$WG_IFACE"
     ip -n "$NS" -6 route replace default dev "$WG_IFACE"
