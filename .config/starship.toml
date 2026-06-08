@@ -1,0 +1,116 @@
+"$schema" = 'https://starship.rs/config-schema.json'
+
+# ---------------------------------------------------------------------------
+# Pure / Snazzy style, ported from a Powerlevel10k "pure" config.
+# Two lines: [dir] [git] on top, prompt char below. Right side carries the
+# command duration, venv, optional user@host (root/SSH only), and the time.
+# ---------------------------------------------------------------------------
+
+# Matches your old PROMPT_ADD_NEWLINE=false. Set to true if you want a blank
+# line between prompts (a little easier on the eyes, your call).
+add_newline = false
+
+format = """
+$directory\
+$git_branch\
+$git_commit\
+$git_state\
+$git_status
+$character"""
+
+right_format = """
+$cmd_duration\
+$python\
+$username\
+$hostname\
+$time"""
+
+# --- Snazzy palette (same colors as your p10k config) ----------------------
+palette = 'snazzy'
+
+[palettes.snazzy]
+red     = '#FF5C57'
+yellow  = '#F3F99D'
+blue    = '#57C7FF'
+magenta = '#FF6AC1'
+cyan    = '#9AEDFE'
+white   = '#F1F1F0'
+grey    = '242'
+
+# --- Prompt character ------------------------------------------------------
+[character]
+success_symbol = '[❯](magenta)'   # magenta on success, like before
+error_symbol   = '[❯](red)'        # red on failure
+vimcmd_symbol  = '[❮](magenta)'    # vi command mode
+
+# --- Current directory -----------------------------------------------------
+[directory]
+style = 'blue'
+truncation_length = 3              # improvement: shortens very deep paths
+truncate_to_repo = true
+format = '[$path]($style) '
+
+# --- Git -------------------------------------------------------------------
+[git_branch]
+format = '[$branch]($style) '
+style = 'grey'
+
+# Detached HEAD shows @<hash> where the branch would be (your p10k behavior).
+[git_commit]
+format = '[@$hash]($style) '
+style = 'grey'
+commit_hash_length = 8
+only_detached = true
+
+# Shown during rebase/merge/cherry-pick etc.
+[git_state]
+format = '[\($state $progress_current/$progress_total\)]($style) '
+style = 'yellow'
+
+# p10k collapsed everything to a single '*'. This is a small improvement:
+# distinct symbols, still grey and unobtrusive. Swap them all back to '*'
+# if you preferred the single-symbol look.
+[git_status]
+style = 'grey'
+format = '([$all_status$ahead_behind]($style)) '
+untracked  = '?'
+modified   = '!'
+staged     = '+'
+deleted    = '✘'
+renamed    = '»'
+conflicted = '~'
+stashed    = '≡'
+ahead      = '⇡'
+behind     = '⇣'
+diverged   = '⇡⇣'
+
+# --- Command duration (right) ----------------------------------------------
+[cmd_duration]
+min_time = 5000                    # only show if >= 5s, like before
+format = '[$duration]($style) '
+style = 'yellow'
+
+# --- Python venv (right) ---------------------------------------------------
+[python]
+format = '[$virtualenv]($style) '  # venv name only, no version, grey
+style = 'grey'
+
+# --- user@host (right, only when it matters) -------------------------------
+[username]
+show_always = false                # hidden unless root or different user
+style_user = 'grey'
+style_root = 'white bold'
+format = '[$user]($style)'
+
+[hostname]
+ssh_only = true                    # hidden unless in an SSH session
+format = '[@$hostname]($style) '
+style = 'grey'
+
+# --- Clock (right) ---------------------------------------------------------
+[time]
+disabled = false
+style = 'grey'
+format = '[$time]($style)'
+time_format = '%H:%M:%S'           # 24h, like your p10k config
+
